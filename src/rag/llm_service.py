@@ -10,13 +10,13 @@ from pathlib import Path
 class LLMService:
     """Service for generating answers using Gemini Flash 1.5."""
     
-    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-1.5-flash"):
         """
         Initialize the LLM service.
         
         Args:
             api_key: Google AI API key (or set GOOGLE_API_KEY env var)
-            model_name: Model name to use (default: gemini-2.0-flash-exp)
+            model_name: Model name to use (default: gemini-1.5-flash)
         """
         # Get API key from parameter, environment variable, or .env file
         if api_key:
