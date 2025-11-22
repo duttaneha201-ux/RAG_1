@@ -30,6 +30,25 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "generator" not in st.session_state:
     st.session_state.generator = None
+if "vector_store_setup" not in st.session_state:
+    st.session_state.vector_store_setup = False
+
+
+def setup_vector_store_if_needed():
+    """Set up vector store on first run."""
+    if not st.session_state.vector_store_setup:
+        try:
+            from src.utils.setup import setup_vector_store
+            with st.spinner("Setting up vector store (first time only)..."):
+                success = setup_vector_store()
+                if success:
+                    st.session_state.vector_store_setup = True
+                    st.success("✓ Vector store ready!")
+                else:
+                    st.error("Failed to set up vector store. Check logs.")
+        except Exception as e:
+            st.warning(f"Vector store setup error: {str(e)}")
+            # Continue anyway - might work if vector store already exists
 
 
 def initialize_generator():
@@ -107,6 +126,9 @@ def main():
                 st.rerun()
     
     st.markdown("---")
+    
+    # Set up vector store if needed (first run)
+    setup_vector_store_if_needed()
     
     # Initialize generator
     generator = initialize_generator()

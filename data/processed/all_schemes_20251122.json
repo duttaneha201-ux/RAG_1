@@ -1,0 +1,72 @@
+{
+  "extracted_at": "2025-11-22T02:47:09.489275",
+  "total_schemes": 6,
+  "schemes": [
+    {
+      "scheme_name": "HDFC Equity Fund",
+      "category": "Flexi Cap",
+      "source_url": "https://groww.in/mutual-funds/hdfc-equity-fund-direct-growth",
+      "expense_ratio": "0.67%",
+      "minimum_sip": "Rs 100",
+      "exit_load": "Exit load of 1% if redeemed within 1 year",
+      "nav": "Rs 2273.63",
+      "tax_implication": "If you redeem within one year, returns are taxed at 20%",
+      "extracted_at": "2025-11-22T02:46:25.299569"
+    },
+    {
+      "scheme_name": "HDFC Large Cap Fund",
+      "category": "Large Cap",
+      "source_url": "https://groww.in/mutual-funds/hdfc-large-cap-fund-direct-growth",
+      "expense_ratio": "0.96%",
+      "minimum_sip": "Rs 100",
+      "exit_load": "Exit load of 1% if redeemed within 1 year",
+      "nav": "Rs 1271.14",
+      "tax_implication": "If you redeem within one year, returns are taxed at 20%",
+      "extracted_at": "2025-11-22T02:46:34.723620"
+    },
+    {
+      "scheme_name": "HDFC Mid Cap Fund",
+      "category": "Mid Cap",
+      "source_url": "https://groww.in/mutual-funds/hdfc-mid-cap-fund-direct-growth",
+      "expense_ratio": "0.71%",
+      "minimum_sip": "Rs 223",
+      "exit_load": "Exit load of 1% if redeemed within 1 year",
+      "nav": "Rs 223.28",
+      "tax_implication": "If you redeem within one year, returns are taxed at 20%",
+      "extracted_at": "2025-11-22T02:46:43.311259"
+    },
+    {
+      "scheme_name": "HDFC Small Cap Fund",
+      "category": "Small Cap",
+      "source_url": "https://groww.in/mutual-funds/hdfc-small-cap-fund-direct-growth",
+      "expense_ratio": "0.67%",
+      "minimum_sip": "Rs 160",
+      "exit_load": "Exit load of 1% if redeemed within 1 year",
+      "nav": "Rs 160.32",
+      "tax_implication": "If you redeem within one year, returns are taxed at 20%",
+      "extracted_at": "2025-11-22T02:46:52.600659"
+    },
+    {
+      "scheme_name": "HDFC Multi Cap Fund",
+      "category": "Multi Cap",
+      "source_url": "https://groww.in/mutual-funds/hdfc-multi-cap-fund-direct-growth",
+      "expense_ratio": "0.74%",
+      "minimum_sip": null,
+      "exit_load": "Exit load of 1% if redeemed within 1 year",
+      "nav": "Rs 20.25",
+      "tax_implication": "If you redeem within one year, returns are taxed at 20%",
+      "extracted_at": "2025-11-22T02:47:01.028620"
+    },
+    {
+      "scheme_name": "HDFC ELSS Tax Saver Fund",
+      "category": "ELSS",
+      "source_url": "https://groww.in/mutual-funds/hdfc-elss-tax-saver-fund-direct-plan-growth",
+      "expense_ratio": "1.08%",
+      "minimum_sip": "Rs 500",
+      "exit_load": "A fee payable to a mutual fund house for exiting a fund (fully or partially) before the completion of a specified period from the date of investment",
+      "nav": "Rs 1580.11",
+      "tax_implication": "If you redeem within one year, returns are taxed at 20%",
+      "extracted_at": "2025-11-22T02:47:09.487384"
+    }
+  ]
+}

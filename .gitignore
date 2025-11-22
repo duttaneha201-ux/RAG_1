@@ -10,7 +10,10 @@ ENV/
 .venv
 
 # Data
-data/
+# Note: data/processed/ JSON files are included in repo for Streamlit Cloud
+# data/raw/ and data/chroma_db/ are excluded
+data/raw/
+data/chroma_db/
 *.db
 *.sqlite
 
