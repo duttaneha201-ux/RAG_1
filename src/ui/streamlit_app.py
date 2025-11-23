@@ -69,28 +69,58 @@ def initialize_generator():
 
 def format_answer_with_fallback(result):
     """Format answer, showing retrieved info if LLM failed."""
-    if 'error' in result.get('answer', '').lower() or '429' in result.get('answer', ''):
-        # LLM rate-limited, show retrieved info
+    answer_text = result.get('answer', '')
+    has_error = (
+        'error' in answer_text.lower() or 
+        '429' in answer_text or 
+        'rate limit' in answer_text.lower() or
+        'quota' in answer_text.lower() or
+        'not found' in answer_text.lower() or
+        'unauthorized' in answer_text.lower() or
+        'forbidden' in answer_text.lower() or
+        result.get('error_type') == 'llm_error'
+    )
+    
+    if has_error and result.get('formatted_context'):
+        # LLM failed, show retrieved info as fallback
         answer_parts = []
         answer_parts.append("⚠️ **LLM temporarily unavailable, showing retrieved information:**\n\n")
         
         # Show formatted context
-        if result.get('formatted_context'):
-            answer_parts.append(result['formatted_context'])
+        answer_parts.append(result['formatted_context'])
         
         # Add source URLs
         if result.get('source_urls'):
             answer_parts.append("\n\n**Sources:**")
             for url in result['source_urls']:
-                answer_parts.append(f"\n- {url}")
+                answer_parts.append(f"\n- [{url}]({url})")
+        elif result.get('source_url'):
+            answer_parts.append(f"\n\n**Source:** [{result['source_url']}]({result['source_url']})")
+        
+        # Add last updated if available
+        if result.get('retrieval_result') and result['retrieval_result'].get('results'):
+            # Try to get extraction date from metadata
+            try:
+                from src.scraper.data_storage import DataStorage
+                storage = DataStorage()
+                schemes = storage.load_latest_data()
+                if schemes:
+                    dates = [s.get('extracted_at', '') for s in schemes if s.get('extracted_at')]
+                    if dates:
+                        latest = max(dates)
+                        from datetime import datetime
+                        date_obj = datetime.fromisoformat(latest.replace('Z', '+00:00'))
+                        answer_parts.append(f"\n\n**Last updated from sources:** {date_obj.strftime('%Y-%m-%d')}")
+            except:
+                pass
         
         return "\n".join(answer_parts)
     else:
         # Normal LLM answer
-        answer = result['answer']
+        answer = answer_text
         # Ensure source URL is included
         if result.get('source_url') and result['source_url'] not in answer:
-            answer += f"\n\n**Source:** {result['source_url']}"
+            answer += f"\n\n**Source:** [{result['source_url']}]({result['source_url']})"
         return answer
 
 

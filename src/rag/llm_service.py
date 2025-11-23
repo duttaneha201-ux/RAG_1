@@ -41,7 +41,30 @@ class LLMService:
         # Configure Gemini
         genai.configure(api_key=self.api_key)
         self.model_name = model_name
-        self.model = genai.GenerativeModel(model_name)
+        
+        # Try to initialize model with fallback options
+        self.model = None
+        model_options = [
+            model_name,  # Try the specified model first
+            "gemini-1.5-flash-latest",  # Common alternative
+            "gemini-1.5-flash-001",  # Versioned alternative
+            "gemini-1.5-pro"  # Pro version as last resort
+        ]
+        
+        for model_option in model_options:
+            try:
+                self.model = genai.GenerativeModel(model_option)
+                # Test if model works by checking if it's accessible
+                self.model_name = model_option
+                break
+            except Exception as e:
+                continue
+        
+        if self.model is None:
+            raise ValueError(
+                f"Could not initialize any Gemini model. Tried: {', '.join(model_options)}. "
+                f"Please check your API key and model availability."
+            )
         
         # Load prompts
         self._load_prompts()
@@ -107,8 +130,41 @@ Answer:"""
         
         # Generate response
         try:
-            response = self.model.generate_content(prompt)
-            answer = response.text.strip()
+            # Configure generation settings
+            generation_config = {
+                "temperature": 0.1,  # Low temperature for factual answers
+                "top_p": 0.8,
+                "top_k": 40,
+                "max_output_tokens": 200,  # Limit to keep answers concise
+            }
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config=generation_config
+            )
+            
+            # Handle response - check if it was blocked or has content
+            if not response:
+                raise ValueError("Empty response from model")
+            
+            # Check for blocked content
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                if response.prompt_feedback.block_reason:
+                    raise ValueError(f"Response blocked: {response.prompt_feedback.block_reason}")
+            
+            # Get text from response
+            if hasattr(response, 'text'):
+                answer = response.text.strip()
+            elif hasattr(response, 'candidates') and response.candidates:
+                if hasattr(response.candidates[0], 'content'):
+                    answer = response.candidates[0].content.parts[0].text.strip()
+                else:
+                    raise ValueError("Could not extract text from response")
+            else:
+                raise ValueError("Unexpected response format")
+            
+            if not answer:
+                raise ValueError("Empty answer from model")
             
             # Ensure answer includes "Last updated" if not present
             if "Last updated" not in answer and "last updated" not in answer.lower():
@@ -120,11 +176,25 @@ Answer:"""
                 'timestamp': datetime.now().isoformat()
             }
         except Exception as e:
+            error_str = str(e)
+            # Check for specific error types
+            if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
+                error_msg = "API rate limit exceeded. Please try again later."
+            elif "404" in error_str or "not found" in error_str.lower():
+                error_msg = f"Model {self.model_name} not found. Please check model availability."
+            elif "401" in error_str or "unauthorized" in error_str.lower():
+                error_msg = "Invalid API key. Please check your GOOGLE_API_KEY."
+            elif "403" in error_str or "forbidden" in error_str.lower():
+                error_msg = "API access forbidden. Please check your API key permissions."
+            else:
+                error_msg = f"Error generating answer: {error_str}"
+            
             return {
-                'answer': f"Error generating answer: {str(e)}",
+                'answer': error_msg,
                 'model': self.model_name,
                 'timestamp': datetime.now().isoformat(),
-                'error': str(e)
+                'error': error_str,
+                'error_type': 'llm_error'
             }
     
     def get_refusal_message(self) -> str:
