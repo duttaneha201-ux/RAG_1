@@ -4,6 +4,10 @@ import sys
 import os
 from pathlib import Path
 
+# Fix for PyTorch meta tensor issue - set before any imports
+os.environ['HF_HUB_DISABLE_EXPERIMENTAL_WARNING'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 

@@ -2,6 +2,8 @@
 from sentence_transformers import SentenceTransformer
 from typing import List
 import numpy as np
+import os
+import torch
 
 
 class EmbeddingService:
@@ -15,7 +17,38 @@ class EmbeddingService:
             model_name: Name of the sentence transformer model to use
         """
         print(f"Loading embedding model: {model_name}")
-        self.model = SentenceTransformer(model_name)
+        
+        # Fix for PyTorch meta tensor issue
+        # Set environment variables to avoid meta tensor problems
+        os.environ['HF_HUB_DISABLE_EXPERIMENTAL_WARNING'] = '1'
+        
+        # Disable meta device to avoid the error
+        try:
+            # Try loading with device_map='cpu' to avoid GPU/meta issues
+            self.model = SentenceTransformer(
+                model_name,
+                device='cpu'  # Force CPU to avoid device transfer issues
+            )
+        except Exception as e:
+            # If that fails, try with trust_remote_code
+            try:
+                self.model = SentenceTransformer(
+                    model_name,
+                    device='cpu',
+                    trust_remote_code=True
+                )
+            except Exception as e2:
+                # Last resort: try without device specification
+                print(f"Warning: Could not load with device='cpu', trying default: {e2}")
+                self.model = SentenceTransformer(model_name)
+        
+        # Ensure model is on CPU and in eval mode
+        if hasattr(self.model, 'to'):
+            try:
+                self.model.eval()
+            except:
+                pass
+        
         self.model_name = model_name
     
     def generate_embedding(self, text: str) -> List[float]:

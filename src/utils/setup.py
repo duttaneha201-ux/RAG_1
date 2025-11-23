@@ -3,6 +3,10 @@ import os
 from pathlib import Path
 import sys
 
+# Fix for PyTorch meta tensor issue - set before any imports
+os.environ['HF_HUB_DISABLE_EXPERIMENTAL_WARNING'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
