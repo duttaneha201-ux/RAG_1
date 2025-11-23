@@ -16,9 +16,14 @@ class AnswerGenerator:
         Args:
             api_key: Google AI API key (optional, can use env var)
         """
-        self.retrieval_service = RetrievalService()
-        self.llm_service = LLMService(api_key=api_key)
-        self.data_storage = DataStorage()
+        try:
+            self.retrieval_service = RetrievalService()
+            self.llm_service = LLMService(api_key=api_key)
+            self.data_storage = DataStorage()
+        except Exception as e:
+            error_msg = f"Failed to initialize AnswerGenerator: {str(e)}"
+            print(f"[ERROR] {error_msg}")
+            raise ValueError(error_msg) from e
     
     def generate_answer(self, question: str, n_results: int = 3) -> Dict:
         """

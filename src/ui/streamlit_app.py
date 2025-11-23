@@ -61,12 +61,27 @@ def initialize_generator():
         try:
             api_key = os.getenv('GOOGLE_API_KEY')
             if not api_key or api_key == 'your_api_key_here':
-                st.error("⚠️ API key not configured. Please set GOOGLE_API_KEY in your .env file.")
+                st.error("⚠️ API key not configured. Please set GOOGLE_API_KEY in your .env file or Streamlit secrets.")
                 return None
-            st.session_state.generator = AnswerGenerator(api_key=api_key)
+            
+            with st.spinner("Initializing LLM service..."):
+                st.session_state.generator = AnswerGenerator(api_key=api_key)
+                st.success(f"✓ LLM initialized with model: {st.session_state.generator.llm_service.model_name}")
             return st.session_state.generator
+        except ValueError as e:
+            error_msg = str(e)
+            st.error(f"⚠️ Failed to initialize LLM: {error_msg}")
+            # Show helpful suggestions
+            if "API key" in error_msg.lower():
+                st.info("💡 **Tip:** Make sure your GOOGLE_API_KEY is set correctly in Streamlit secrets or .env file")
+            elif "model" in error_msg.lower():
+                st.info("💡 **Tip:** Check if your API key has access to Gemini models")
+            return None
         except Exception as e:
-            st.error(f"Failed to initialize: {str(e)}")
+            st.error(f"⚠️ Failed to initialize: {str(e)}")
+            import traceback
+            with st.expander("🔍 Error Details"):
+                st.code(traceback.format_exc())
             return None
     return st.session_state.generator
 

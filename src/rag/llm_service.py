@@ -45,26 +45,49 @@ class LLMService:
         # Try to initialize model with fallback options
         self.model = None
         model_options = [
-            model_name,  # Try the specified model first
-            "gemini-1.5-flash-latest",  # Common alternative
-            "gemini-1.5-flash-001",  # Versioned alternative
-            "gemini-1.5-pro"  # Pro version as last resort
+            "gemini-1.5-flash",  # Most common
+            "gemini-1.5-flash-latest",  # Latest version
+            "gemini-1.5-flash-001",  # Versioned
+            "gemini-1.5-pro",  # Pro version
+            "gemini-pro",  # Older pro version
+            model_name  # User specified as last resort
         ]
         
+        last_error = None
         for model_option in model_options:
             try:
-                self.model = genai.GenerativeModel(model_option)
-                # Test if model works by checking if it's accessible
-                self.model_name = model_option
-                break
+                # Try to create the model
+                test_model = genai.GenerativeModel(model_option)
+                # Test if model works by making a simple test call
+                try:
+                    # Quick test to verify model works
+                    test_response = test_model.generate_content("test", generation_config={"max_output_tokens": 1})
+                    if test_response and (hasattr(test_response, 'text') or (hasattr(test_response, 'candidates') and test_response.candidates)):
+                        self.model = test_model
+                        self.model_name = model_option
+                        print(f"✓ Successfully initialized model: {model_option}")
+                        break
+                except Exception as test_error:
+                    # Model exists but test failed, still use it
+                    self.model = test_model
+                    self.model_name = model_option
+                    print(f"✓ Initialized model: {model_option} (test call had minor issue, but model is available)")
+                    break
             except Exception as e:
+                last_error = str(e)
+                print(f"✗ Failed to initialize {model_option}: {last_error}")
                 continue
         
         if self.model is None:
-            raise ValueError(
-                f"Could not initialize any Gemini model. Tried: {', '.join(model_options)}. "
-                f"Please check your API key and model availability."
+            error_msg = (
+                f"Could not initialize any Gemini model. Tried: {', '.join(model_options)}.\n"
+                f"Last error: {last_error}\n"
+                f"Please check:\n"
+                f"  1. Your API key is valid (current key starts with: {self.api_key[:10]}...)\n"
+                f"  2. API key has access to Gemini models\n"
+                f"  3. Model names are correct for your API key type"
             )
+            raise ValueError(error_msg)
         
         # Load prompts
         self._load_prompts()
@@ -131,17 +154,40 @@ Answer:"""
         # Generate response
         try:
             # Configure generation settings
-            generation_config = {
-                "temperature": 0.1,  # Low temperature for factual answers
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 200,  # Limit to keep answers concise
-            }
+            try:
+                from google.generativeai.types import GenerationConfig
+                generation_config = GenerationConfig(
+                    temperature=0.1,  # Low temperature for factual answers
+                    top_p=0.8,
+                    top_k=40,
+                    max_output_tokens=200,  # Limit to keep answers concise
+                )
+            except ImportError:
+                # Fallback to dict if GenerationConfig not available
+                generation_config = {
+                    "temperature": 0.1,
+                    "top_p": 0.8,
+                    "top_k": 40,
+                    "max_output_tokens": 200,
+                }
             
-            response = self.model.generate_content(
-                prompt,
-                generation_config=generation_config
-            )
+            # Generate with retry logic
+            max_retries = 2
+            response = None
+            for attempt in range(max_retries):
+                try:
+                    response = self.model.generate_content(
+                        prompt,
+                        generation_config=generation_config
+                    )
+                    break
+                except Exception as retry_error:
+                    if attempt == max_retries - 1:
+                        raise
+                    # Wait a bit before retry
+                    import time
+                    time.sleep(0.5)
+                    continue
             
             # Handle response - check if it was blocked or has content
             if not response:
@@ -177,24 +223,32 @@ Answer:"""
             }
         except Exception as e:
             error_str = str(e)
+            error_type = type(e).__name__
+            
+            # Log the full error for debugging
+            print(f"LLM Error ({error_type}): {error_str}")
+            
             # Check for specific error types
             if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
                 error_msg = "API rate limit exceeded. Please try again later."
-            elif "404" in error_str or "not found" in error_str.lower():
+            elif "404" in error_str or "not found" in error_str.lower() or "does not exist" in error_str.lower():
                 error_msg = f"Model {self.model_name} not found. Please check model availability."
-            elif "401" in error_str or "unauthorized" in error_str.lower():
+            elif "401" in error_str or "unauthorized" in error_str.lower() or "invalid api key" in error_str.lower():
                 error_msg = "Invalid API key. Please check your GOOGLE_API_KEY."
             elif "403" in error_str or "forbidden" in error_str.lower():
                 error_msg = "API access forbidden. Please check your API key permissions."
+            elif "safety" in error_str.lower() or "blocked" in error_str.lower():
+                error_msg = "Response was blocked by safety filters. Please rephrase your question."
             else:
-                error_msg = f"Error generating answer: {error_str}"
+                error_msg = f"Error generating answer: {error_str[:200]}"  # Truncate long errors
             
             return {
                 'answer': error_msg,
                 'model': self.model_name,
                 'timestamp': datetime.now().isoformat(),
                 'error': error_str,
-                'error_type': 'llm_error'
+                'error_type': 'llm_error',
+                'error_class': error_type
             }
     
     def get_refusal_message(self) -> str:
