@@ -21,17 +21,71 @@ class VectorStore:
         self.persist_directory.mkdir(parents=True, exist_ok=True)
         self.collection_name = collection_name
         
-        # Initialize ChromaDB client
-        self.client = chromadb.PersistentClient(
-            path=str(self.persist_directory),
-            settings=Settings(anonymized_telemetry=False)
-        )
-        
-        # Get or create collection
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"description": "HDFC Mutual Fund scheme data"}
-        )
+        # Initialize ChromaDB client with error handling
+        try:
+            self.client = chromadb.PersistentClient(
+                path=str(self.persist_directory),
+                settings=Settings(anonymized_telemetry=False)
+            )
+            
+            # Get or create collection
+            self.collection = self.client.get_or_create_collection(
+                name=collection_name,
+                metadata={"description": "HDFC Mutual Fund scheme data"}
+            )
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check if it's a tenant/database connection error
+            if "tenant" in error_str or "default_tenant" in error_str or "could not connect" in error_str:
+                print(f"WARNING: ChromaDB database appears corrupted. Resetting database...")
+                # Try to reset by deleting and recreating
+                self._reset_database()
+                # Try again after reset
+                self.client = chromadb.PersistentClient(
+                    path=str(self.persist_directory),
+                    settings=Settings(anonymized_telemetry=False)
+                )
+                self.collection = self.client.get_or_create_collection(
+                    name=collection_name,
+                    metadata={"description": "HDFC Mutual Fund scheme data"}
+                )
+            else:
+                # Re-raise if it's a different error
+                raise
+    
+    def _reset_database(self):
+        """Reset the ChromaDB database by clearing the directory."""
+        import shutil
+        try:
+            # Close client if it exists
+            if hasattr(self, 'client') and self.client:
+                try:
+                    # Try to delete the collection first
+                    if hasattr(self, 'collection') and self.collection:
+                        try:
+                            self.client.delete_collection(name=self.collection_name)
+                        except:
+                            pass
+                except:
+                    pass
+            
+            # Remove the entire database directory
+            if self.persist_directory.exists():
+                print(f"Removing corrupted database at: {self.persist_directory}")
+                shutil.rmtree(self.persist_directory, ignore_errors=True)
+            
+            # Recreate the directory
+            self.persist_directory.mkdir(parents=True, exist_ok=True)
+            print(f"Database reset complete. New database will be created at: {self.persist_directory}")
+        except Exception as e:
+            print(f"Error during database reset: {e}")
+            # Try to at least remove SQLite file
+            sqlite_file = self.persist_directory / "chroma.sqlite3"
+            if sqlite_file.exists():
+                try:
+                    sqlite_file.unlink()
+                except:
+                    pass
     
     def add_documents(
         self,

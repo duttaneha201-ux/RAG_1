@@ -9,12 +9,19 @@ os.environ['HF_HUB_DISABLE_EXPERIMENTAL_WARNING'] = '1'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
-# Load .env file
+# Load .env file from project root
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Explicitly load .env from project root
+    env_path = project_root / '.env'
+    if env_path.exists():
+        load_dotenv(env_path, override=True)
+    else:
+        # Also try loading without explicit path (fallback)
+        load_dotenv(dotenv_path=project_root, override=True)
 except ImportError:
     pass
 
@@ -59,9 +66,38 @@ def initialize_generator():
     """Initialize the answer generator."""
     if st.session_state.generator is None:
         try:
+            # Reload .env file to ensure we have the latest values
+            project_root = Path(__file__).parent.parent.parent
+            env_path = project_root / '.env'
+            
+            try:
+                from dotenv import load_dotenv
+                if env_path.exists():
+                    load_dotenv(env_path, override=True)
+                else:
+                    load_dotenv(dotenv_path=project_root, override=True)
+            except ImportError:
+                pass
+            
             api_key = os.getenv('GOOGLE_API_KEY')
-            if not api_key or api_key == 'your_api_key_here':
-                st.error("⚠️ API key not configured. Please set GOOGLE_API_KEY in your .env file or Streamlit secrets.")
+            
+            # Better error messages
+            if not api_key:
+                st.error("⚠️ API key not found. Please check:")
+                with st.expander("🔧 Setup Instructions"):
+                    st.markdown(f"""
+                    1. Create a `.env` file in: `{project_root}`
+                    2. Add this line: `GOOGLE_API_KEY=your_actual_api_key_here`
+                    3. Make sure the file is named `.env` (not `.env.example`)
+                    4. Restart the Streamlit app
+                    
+                    **Current .env file location:** `{env_path}`
+                    **File exists:** {'✅ Yes' if env_path.exists() else '❌ No'}
+                    """)
+                return None
+            
+            if api_key == 'your_api_key_here':
+                st.error("⚠️ API key placeholder found. Please replace `your_api_key_here` with your actual API key in the .env file.")
                 return None
             
             with st.spinner("Initializing LLM service..."):
@@ -69,7 +105,11 @@ def initialize_generator():
                 st.success(f"✓ LLM initialized with model: {st.session_state.generator.llm_service.model_name}")
             return st.session_state.generator
         except ValueError as e:
-            error_msg = str(e)
+            # Safely convert exception to string to avoid Unicode encoding issues
+            try:
+                error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+            except:
+                error_msg = "Failed to initialize LLM (encoding error)"
             st.error(f"⚠️ Failed to initialize LLM: {error_msg}")
             # Show helpful suggestions
             if "API key" in error_msg.lower():
@@ -78,10 +118,21 @@ def initialize_generator():
                 st.info("💡 **Tip:** Check if your API key has access to Gemini models")
             return None
         except Exception as e:
-            st.error(f"⚠️ Failed to initialize: {str(e)}")
+            # Safely convert exception to string to avoid Unicode encoding issues
+            try:
+                error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+            except:
+                error_msg = "Failed to initialize (encoding error)"
+            st.error(f"⚠️ Failed to initialize: {error_msg}")
             import traceback
             with st.expander("🔍 Error Details"):
-                st.code(traceback.format_exc())
+                try:
+                    traceback_str = traceback.format_exc()
+                    # Sanitize traceback for encoding issues
+                    traceback_str = traceback_str.encode('ascii', 'replace').decode('ascii')
+                    st.code(traceback_str)
+                except:
+                    st.code("Error details unavailable due to encoding issue")
             return None
     return st.session_state.generator
 
@@ -105,7 +156,16 @@ def format_answer_with_fallback(result):
         answer_parts = []
         answer_parts.append("⚠️ **LLM temporarily unavailable, showing retrieved information:**\n\n")
         
+        # Show the actual error message first so user knows what went wrong
+        if result.get('error') or answer_text:
+            error_display = answer_text if answer_text and answer_text != result.get('error', '') else result.get('error', 'Unknown error')
+            # Limit error message length
+            if len(error_display) > 200:
+                error_display = error_display[:200] + "..."
+            answer_parts.append(f"**Error:** {error_display}\n")
+        
         # Show formatted context
+        answer_parts.append("**Retrieved Information:**\n")
         answer_parts.append(result['formatted_context'])
         
         # Add source URLs
@@ -236,6 +296,14 @@ def main():
                                 st.write(f"**Schemes:** {', '.join(schemes)}")
                         if result.get('model'):
                             st.write(f"**Model:** {result['model']}")
+                        # Show error information if LLM failed
+                        if result.get('error_type') == 'llm_error' or result.get('error'):
+                            st.error("**LLM Error Detected**")
+                            st.write(f"**Error:** {result.get('error', 'Unknown error')[:200]}")
+                            st.write(f"**Error Type:** {result.get('error_class', 'Unknown')}")
+                            if result.get('error'):
+                                with st.expander("Full Error Details"):
+                                    st.code(result.get('error', '')[:1000])
                 
                 except Exception as e:
                     error_msg = f"Error: {str(e)}"

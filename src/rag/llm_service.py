@@ -1,16 +1,39 @@
 """LLM service for generating answers using Gemini Flash 1.5."""
 import google.generativeai as genai
 import os
+import sys
 from typing import Optional, Dict
 from datetime import datetime
 import yaml
 from pathlib import Path
+from src.utils.token_counter import estimate_tokens, truncate_smart
+
+# Fix Windows console encoding for Unicode characters
+if sys.platform == 'win32':
+    try:
+        # Try to set UTF-8 encoding for stdout/stderr on Windows
+        if sys.stdout.encoding != 'utf-8':
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if sys.stderr.encoding != 'utf-8':
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, ValueError):
+        # Fallback: use ASCII-safe characters
+        pass
+
+def safe_print(message: str):
+    """Print message safely, handling encoding errors on Windows."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        # Replace Unicode characters with ASCII equivalents
+        safe_message = message.replace('✓', '[OK]').replace('✗', '[X]').replace('⚠', '[!]')
+        print(safe_message)
 
 
 class LLMService:
     """Service for generating answers using Gemini Flash 1.5."""
     
-    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-1.5-flash"):
+    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-2.0-flash"):
         """
         Initialize the LLM service.
         
@@ -42,15 +65,26 @@ class LLMService:
         genai.configure(api_key=self.api_key)
         self.model_name = model_name
         
+        # Token limits for Gemini 1.5 Flash (conservative limits to avoid errors)
+        # Gemini 1.5 Flash has 8,192 input tokens, we'll use 6,000 as a safe limit
+        self.max_input_tokens = 6000  # Conservative limit for input
+        self.max_context_tokens = 4000  # Max tokens for context portion
+        
         # Try to initialize model with fallback options
+        # Updated with actual available model names from API
         self.model = None
         model_options = [
-            "gemini-1.5-flash",  # Most common
-            "gemini-1.5-flash-latest",  # Latest version
-            "gemini-1.5-flash-001",  # Versioned
-            "gemini-1.5-pro",  # Pro version
-            "gemini-pro",  # Older pro version
-            model_name  # User specified as last resort
+            model_name,  # Try user-specified or default first
+            "gemini-2.0-flash",  # Known working model
+            "gemini-2.5-flash",  # Latest 2.5 flash
+            "gemini-flash-latest",  # Latest flash version
+            "gemini-2.0-flash-lite",  # 2.0 lite
+            "gemini-2.5-flash-lite",  # Lite version
+            "gemini-pro-latest",  # Latest pro
+            "gemini-1.5-flash-latest",  # Try older versions as fallback
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-pro",
         ]
         
         last_error = None
@@ -58,25 +92,49 @@ class LLMService:
             try:
                 # Try to create the model
                 test_model = genai.GenerativeModel(model_option)
-                # Test if model works by making a simple test call
+                # Model created successfully, try a simple test call
                 try:
-                    # Quick test to verify model works
-                    test_response = test_model.generate_content("test", generation_config={"max_output_tokens": 1})
+                    # Quick test to verify model works (with minimal tokens)
+                    test_response = test_model.generate_content(
+                        "Hi", 
+                        generation_config={"max_output_tokens": 5, "temperature": 0.1}
+                    )
                     if test_response and (hasattr(test_response, 'text') or (hasattr(test_response, 'candidates') and test_response.candidates)):
                         self.model = test_model
                         self.model_name = model_option
-                        print(f"✓ Successfully initialized model: {model_option}")
+                        safe_print(f"[OK] Successfully initialized model: {model_option}")
+                        break
+                    else:
+                        # Response exists but no text - model might still work
+                        self.model = test_model
+                        self.model_name = model_option
+                        safe_print(f"[OK] Initialized model: {model_option} (will test on first query)")
                         break
                 except Exception as test_error:
-                    # Model exists but test failed, still use it
+                    error_str = str(test_error).lower()
+                    # If it's a model not found error, try next option
+                    if "not found" in error_str or "does not exist" in error_str or "404" in error_str:
+                        last_error = str(test_error)
+                        safe_print(f"[SKIP] Model {model_option} not available: {str(test_error)[:100]}")
+                        continue
+                    # For other errors (rate limit, etc.), model might still work
                     self.model = test_model
                     self.model_name = model_option
-                    print(f"✓ Initialized model: {model_option} (test call had minor issue, but model is available)")
+                    safe_print(f"[OK] Initialized model: {model_option} (test had issues but model created successfully)")
                     break
             except Exception as e:
+                error_str = str(e).lower()
                 last_error = str(e)
-                print(f"✗ Failed to initialize {model_option}: {last_error}")
-                continue
+                # If it's a model not found error, try next option
+                if "not found" in error_str or "does not exist" in error_str or "404" in error_str:
+                    safe_print(f"[SKIP] Model {model_option} not available")
+                    continue
+                else:
+                    # Other errors - might still work
+                    self.model = genai.GenerativeModel(model_option)
+                    self.model_name = model_option
+                    safe_print(f"[OK] Initialized model: {model_option} (proceeding despite initialization warning)")
+                    break
         
         if self.model is None:
             error_msg = (
@@ -145,11 +203,49 @@ Answer:"""
         else:
             date_str = datetime.now().strftime('%Y-%m-%d')
         
-        # Format prompt - replace DATE_PLACEHOLDER with actual date, then format context and question
-        prompt = self.system_prompt_template.replace('DATE_PLACEHOLDER', date_str).format(
+        # Prepare system prompt template
+        system_prompt_base = self.system_prompt_template.replace('DATE_PLACEHOLDER', date_str)
+        
+        # First, format prompt with full context to check total size
+        prompt = system_prompt_base.format(
             context=context,
             question=question
         )
+        
+        # Check total token count
+        total_prompt_tokens = estimate_tokens(prompt)
+        
+        # If prompt is too long, truncate context iteratively
+        if total_prompt_tokens > self.max_input_tokens:
+            safe_print(f"⚠️  Prompt too long ({total_prompt_tokens} tokens), truncating context...")
+            
+            # Estimate tokens for prompt without context (system prompt + question)
+            prompt_without_context = system_prompt_base.format(context="", question=question)
+            base_tokens = estimate_tokens(prompt_without_context)
+            
+            # Calculate available space for context
+            available_context_tokens = self.max_input_tokens - base_tokens - 100  # 100 token safety buffer
+            
+            if available_context_tokens > 500:  # Only truncate if we have meaningful space
+                context_tokens = estimate_tokens(context)
+                safe_print(f"   Context: {context_tokens} tokens, Available: {available_context_tokens} tokens")
+                
+                context, actual_context_tokens = truncate_smart(
+                    context, 
+                    available_context_tokens, 
+                    preserve_end=False
+                )
+                
+                # Reformulate prompt with truncated context
+                prompt = system_prompt_base.format(
+                    context=context,
+                    question=question
+                )
+                
+                final_tokens = estimate_tokens(prompt)
+                safe_print(f"✓ Context truncated to {actual_context_tokens} tokens, Final prompt: {final_tokens} tokens")
+            else:
+                safe_print(f"⚠️  Warning: Very limited token budget. Prompt may exceed limits.")
         
         # Generate response
         try:
@@ -171,9 +267,11 @@ Answer:"""
                     "max_output_tokens": 200,
                 }
             
-            # Generate with retry logic
+            # Generate with retry logic and model fallback
             max_retries = 2
             response = None
+            last_gen_error = None
+            
             for attempt in range(max_retries):
                 try:
                     response = self.model.generate_content(
@@ -182,6 +280,39 @@ Answer:"""
                     )
                     break
                 except Exception as retry_error:
+                    last_gen_error = retry_error
+                    error_str = str(retry_error).lower()
+                    
+                    # If model not found, try to find an alternative model
+                    if "not found" in error_str or "404" in error_str or "does not exist" in error_str:
+                        safe_print(f"Model {self.model_name} not found, trying alternative models...")
+                        # Try alternative models
+                        alternative_models = [
+                            "gemini-1.5-flash-latest",
+                            "gemini-1.5-flash-8b", 
+                            "gemini-1.5-pro-latest",
+                            "gemini-1.5-pro",
+                            "gemini-pro"
+                        ]
+                        for alt_model in alternative_models:
+                            if alt_model == self.model_name:
+                                continue
+                            try:
+                                safe_print(f"Trying alternative model: {alt_model}")
+                                alt_model_instance = genai.GenerativeModel(alt_model)
+                                response = alt_model_instance.generate_content(
+                                    prompt,
+                                    generation_config=generation_config
+                                )
+                                self.model = alt_model_instance
+                                self.model_name = alt_model
+                                safe_print(f"Successfully switched to model: {alt_model}")
+                                break
+                            except Exception:
+                                continue
+                        if response:
+                            break
+                    
                     if attempt == max_retries - 1:
                         raise
                     # Wait a bit before retry
@@ -198,16 +329,36 @@ Answer:"""
                 if response.prompt_feedback.block_reason:
                     raise ValueError(f"Response blocked: {response.prompt_feedback.block_reason}")
             
-            # Get text from response
-            if hasattr(response, 'text'):
-                answer = response.text.strip()
-            elif hasattr(response, 'candidates') and response.candidates:
-                if hasattr(response.candidates[0], 'content'):
-                    answer = response.candidates[0].content.parts[0].text.strip()
+            # Get text from response - handle different response formats
+            answer = None
+            
+            # Try response.text first (most common)
+            try:
+                if hasattr(response, 'text') and response.text:
+                    answer = response.text.strip()
+            except Exception:
+                pass
+            
+            # If that didn't work, try accessing via candidates
+            if not answer and hasattr(response, 'candidates') and response.candidates:
+                try:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content'):
+                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                            if hasattr(candidate.content.parts[0], 'text'):
+                                answer = candidate.content.parts[0].text.strip()
+                except Exception:
+                    pass
+            
+            # If still no answer, try to extract from response string representation
+            if not answer:
+                # Last resort: try to get any text content
+                response_str = str(response)
+                if response_str and len(response_str) > 10:
+                    # This shouldn't normally happen, but handle it
+                    answer = response_str[:500]  # Limit to avoid huge strings
                 else:
-                    raise ValueError("Could not extract text from response")
-            else:
-                raise ValueError("Unexpected response format")
+                    raise ValueError("Could not extract text from response - response format not recognized")
             
             if not answer:
                 raise ValueError("Empty answer from model")
@@ -226,19 +377,28 @@ Answer:"""
             error_type = type(e).__name__
             
             # Log the full error for debugging
-            print(f"LLM Error ({error_type}): {error_str}")
+            safe_print(f"LLM Error ({error_type}): {error_str}")
             
             # Check for specific error types
             if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
                 error_msg = "API rate limit exceeded. Please try again later."
             elif "404" in error_str or "not found" in error_str.lower() or "does not exist" in error_str.lower():
-                error_msg = f"Model {self.model_name} not found. Please check model availability."
+                error_msg = (
+                    f"Model '{self.model_name}' not found or not available with your API key.\n\n"
+                    f"**Troubleshooting steps:**\n"
+                    f"1. Verify your API key at: https://makersuite.google.com/app/apikey\n"
+                    f"2. Check if billing is enabled (some models require paid tier)\n"
+                    f"3. Try regenerating your API key\n"
+                    f"4. Check Google AI Studio for available models: https://aistudio.google.com/"
+                )
             elif "401" in error_str or "unauthorized" in error_str.lower() or "invalid api key" in error_str.lower():
                 error_msg = "Invalid API key. Please check your GOOGLE_API_KEY."
             elif "403" in error_str or "forbidden" in error_str.lower():
                 error_msg = "API access forbidden. Please check your API key permissions."
             elif "safety" in error_str.lower() or "blocked" in error_str.lower():
                 error_msg = "Response was blocked by safety filters. Please rephrase your question."
+            elif "token" in error_str.lower() and ("limit" in error_str.lower() or "exceeded" in error_str.lower() or "too long" in error_str.lower()):
+                error_msg = f"Input too long ({estimate_tokens(prompt)} tokens). The context was too large. Please try a more specific question."
             else:
                 error_msg = f"Error generating answer: {error_str[:200]}"  # Truncate long errors
             

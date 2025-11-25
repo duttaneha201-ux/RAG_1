@@ -1,9 +1,23 @@
 """Answer generator combining retrieval and LLM."""
 from typing import Dict, Optional
+import sys
 from src.rag.retrieval_service import RetrievalService
 from src.rag.llm_service import LLMService
 from src.scraper.data_storage import DataStorage
 from datetime import datetime
+
+def safe_str_error(error: Exception) -> str:
+    """Convert exception to string safely, handling Unicode encoding issues on Windows."""
+    try:
+        error_str = str(error)
+        # Replace any Unicode characters that might cause encoding issues
+        return error_str.encode('ascii', 'replace').decode('ascii')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        # Fallback: use repr if string conversion fails
+        try:
+            return repr(error)
+        except:
+            return "An error occurred (unable to encode error message)"
 
 
 class AnswerGenerator:
@@ -21,8 +35,13 @@ class AnswerGenerator:
             self.llm_service = LLMService(api_key=api_key)
             self.data_storage = DataStorage()
         except Exception as e:
-            error_msg = f"Failed to initialize AnswerGenerator: {str(e)}"
-            print(f"[ERROR] {error_msg}")
+            error_str = safe_str_error(e)
+            error_msg = f"Failed to initialize AnswerGenerator: {error_str}"
+            # Use safe print to avoid encoding issues
+            try:
+                print(f"[ERROR] {error_msg}")
+            except UnicodeEncodeError:
+                print(f"[ERROR] Failed to initialize AnswerGenerator: {error_str}")
             raise ValueError(error_msg) from e
     
     def generate_answer(self, question: str, n_results: int = 3) -> Dict:

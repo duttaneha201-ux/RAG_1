@@ -1,14 +1,20 @@
 """Prepare extracted data for vector store by converting to searchable chunks."""
 from typing import List, Dict
 from src.scraper.data_storage import DataStorage
+from src.utils.token_counter import estimate_tokens, truncate_smart
 
 
 class DataPreparation:
     """Prepare mutual fund data for vector storage."""
     
-    def __init__(self):
-        """Initialize the data preparation service."""
-        pass
+    def __init__(self, max_chunk_tokens: int = 500):
+        """
+        Initialize the data preparation service.
+        
+        Args:
+            max_chunk_tokens: Maximum tokens per chunk (default: 500)
+        """
+        self.max_chunk_tokens = max_chunk_tokens
     
     def prepare_chunks_from_scheme(self, scheme_data: Dict) -> List[Dict]:
         """
@@ -47,14 +53,28 @@ class DataPreparation:
         for field_key, field_label in fields.items():
             value = scheme_data.get(field_key)
             if value and value != 'None' and value is not None:
+                # Convert value to string
+                value_str = str(value)
+                
+                # Truncate value if it's too long (especially for tax_implication which can be lengthy)
+                value_tokens = estimate_tokens(value_str)
+                if value_tokens > self.max_chunk_tokens:
+                    # Truncate the value to fit within token limit
+                    value_str, _ = truncate_smart(value_str, self.max_chunk_tokens, preserve_end=False)
+                
                 # Create a searchable text chunk
-                text = self._create_chunk_text(scheme_name, field_label, value, category)
+                text = self._create_chunk_text(scheme_name, field_label, value_str, category)
+                
+                # Final check: truncate the entire chunk if still too long
+                text_tokens = estimate_tokens(text)
+                if text_tokens > self.max_chunk_tokens:
+                    text, _ = truncate_smart(text, self.max_chunk_tokens, preserve_end=False)
                 
                 metadata = {
                     **base_metadata,
                     'field_name': field_key,
                     'field_label': field_label,
-                    'field_value': str(value)
+                    'field_value': value_str
                 }
                 
                 chunks.append({
@@ -65,6 +85,11 @@ class DataPreparation:
         # Also create a comprehensive chunk with all information
         comprehensive_text = self._create_comprehensive_chunk(scheme_data)
         if comprehensive_text:
+            # Truncate comprehensive chunk if too long
+            comp_tokens = estimate_tokens(comprehensive_text)
+            if comp_tokens > self.max_chunk_tokens:
+                comprehensive_text, _ = truncate_smart(comprehensive_text, self.max_chunk_tokens, preserve_end=False)
+            
             chunks.append({
                 'text': comprehensive_text,
                 'metadata': {
